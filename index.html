@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sultan Kebap Canlı Takip Sistemi</title>
+    
+    <!-- GÜVENLİ VE HIZLI FİREBASE BAĞLANTI KÜTÜPHANELERİ -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: #f4f6f9; color: #333; padding: 15px; }
+        .hidden { display: none !important; }
+        button, .btn-link { padding: 12px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 15px; transition: 0.2s; text-align: center; text-decoration: none; display: inline-block; -webkit-tap-highlight-color: transparent; }
+        button:active, .btn-link:active { opacity: 0.8; }
+        
+        #login-selection-screen { display: flex; flex-direction: column; gap: 15px; max-width: 400px; margin: 50px auto; text-align: center; }
+        input, textarea { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        .btn-admin { background: #2c3e50; color: white; }
+        .btn-user { background: #27ae60; color: white; }
+        
+        .panel { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+        h2 { margin-bottom: 15px; border-bottom: 2px solid #eee; padding-bottom: 5px; text-align: center; }
+        
+        .order-card { background: #fdfefe; border: 2px solid #e2e8f0; padding: 15px; border-radius: 8px; margin-top: 15px; }
+        .status-badge { display: inline-block; padding: 5px 10px; background: #e2e8f0; border-radius: 20px; font-size: 12px; font-weight: bold; margin-top: 5px; }
+        
+        .action-group { display: flex; flex-direction: column; gap: 10px; margin-top: 15px; }
+        .btn-status { background: #3498db; color: white; }
+        .btn-fail { background: #e67e22; color: white; }
+        .btn-danger { background: #e74c3c; color: white; animation: pulse 1.5s infinite; }
+        
+        #emergency-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(231, 76, 60, 0.95); z-index: 9999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: white; text-align: center; padding: 20px;
+        }
+        #emergency-overlay h1 { font-size: 35px; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 2px; }
+        #emergency-overlay p { font-size: 18px; margin-bottom: 15px; line-height: 1.5; }
+        .btn-close-emergency { background: white; color: #e74c3c; padding: 10px 20px; margin-top: 20px; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ACİL DURUM EKRANI (ADMİNDE ANINDA PATLAR) -->
+    <div id="emergency-overlay" class="hidden">
+        <h1>🚨 ACİL DURUM BİLDİRİMİ! 🚨</h1>
+        <p id="emergency-details">Bir sürücü tehlikede!</p>
+        <div id="geo-link-container"></div>
+        <button class="btn-close-emergency" onclick="clearEmergency()">Durumu Düzelt / Ekranı Kapat</button>
+    </div>
+
+    <!-- GİRİŞ SEÇİM EKRANI -->
+    <div id="login-selection-screen" class="panel">
+        <h2>Sultan Kebap Canlı Takip</h2>
+        <button class="btn-admin" style="width: 100%; padding: 15px; font-size: 16px;" onclick="showLoginForm('admin')">🔐 Admin Girişi</button>
+        <button class="btn-user" style="width: 100%; padding: 15px; font-size: 16px;" onclick="showLoginForm('kurye')">🏍️ Kurye Girişi</button>
+    </div>
+
+    <!-- ŞİFRE GİRME EKRANI -->
+    <div id="login-form-screen" class="panel hidden">
+        <h2 id="login-title">Giriş Yap</h2>
+        <input type="text" id="login-username" placeholder="Kullanıcı Adı">
+        <input type="password" id="login-password" placeholder="Şifre">
+        <button id="btn-submit-login" style="width: 100%; margin-bottom: 10px;" onclick="handleLogin()">Giriş Yap</button>
+        <button class="btn-fail" style="width: 100%; background: #7f8c8d;" onclick="backToSelection()">⬅️ Geri Dön</button>
+    </div>
+
+    <!-- ADMIN PANELİ -->
+    <div id="admin-panel" class="panel hidden">
+        <h2>Admin Canlı Paneli</h2>
+        <label>Sipariş İçeriği:</label>
+        <input type="text" id="order-items" placeholder="Örn: 2x Kaşarlı Pide">
+        <label>Toplam Tutar (₺):</label>
+        <input type="number" id="order-price" placeholder="Örn: 150">
+        <label>Teslimat Adresi:</label>
+        <textarea id="order-address" rows="3" placeholder="Adres giriniz..."></textarea>
+        <button class="btn-user" style="width:100%; margin-top: 10px;" onclick="createOrder()">Sipariş Oluştur</button>
+        
+        <hr style="margin:20px 0;">
+        <h3>Kuryeden Gelen Canlı Durum:</h3>
+        <div id="admin-order-monitor">Sipariş bekleniyor...</div>
+
+        <!-- YENİ KULLANICI EKLEME -->
+        <div style="margin-top: 30px; border-top: 2px dashed #ccc; padding-top: 20px;">
+            <h3>👥 Yeni Sürücü/Kurye Ekle</h3>
+            <input type="text" id="new-kurye-name" placeholder="Kurye Kullanıcı Adı">
+            <input type="password" id="new-kurye-pass" placeholder="Kurye Şifresi">
+            <button class="btn-admin" style="width: 100%; background: #8e44ad;" onclick="addKurye()">Kuryeyi Canlı Sisteme Kaydet</button>
+        </div>
+        <button class="btn-fail" style="width: 100%; margin-top: 20px; background:#7f8c8d;" onclick="logout()">Çıkış Yap</button>
+    </div>
+
+    <!-- KURYENİN KENDİ TELEFON EKRANI -->
+    <div id="user-panel" class="panel hidden">
+        <h2>Kurye Ekranı (<span id="display-kurye-name"></span>)</h2>
+        <div id="user-order-display">Aktif sipariş bulunmuyor.</div>
+        
+        <div style="margin-top: 30px; border-top: 2px dashed #ccc; padding-top: 20px;">
+            <button id="btn-main-emergency" class="btn-danger" style="width: 100%; font-size: 18px; padding: 20px;" onclick="showEmergencyReasons()">🚨 YARDIM İSTE (MERKEZE BİLDİR) 🚨</button>
+            
+            <div id="emergency-reason-box" class="hidden" style="margin-top:15px; background: #fdf2e9; padding: 15px; border-radius: 8px; border: 2px solid #e59866;">
+                <h4 style="margin-bottom:12px; color:#d35400; text-align:center;">⚠️ Acil Durum Sebebi:</h4>
+                <button class="btn-fail" style="width: 100%; margin-bottom: 6px; background:#e74c3c;" onclick="sendEmergencySignal('Kaza')">💥 Kaza Yaptım</button>
+                <button class="btn-fail" style="width: 100%; margin-bottom: 6px; background:#9b59b6;" onclick="sendEmergencySignal('Taciz')">🗣️ Tacize Uğradım</button>
+                <button class="btn-fail" style="width: 100%; margin-bottom: 6px; background:#c0392b;" onclick="sendEmergencySignal('Saldırı')">🥊 Saldırıya Uğradım</button>
+                <button class="btn-fail" style="width: 100%; margin-bottom: 6px; background:#7f8c8d;" onclick="sendEmergencySignal('Çalıntı (Sipariş)')">📦 Sipariş Çalındı</button>
+                <button class="btn-fail" style="width: 100%; margin-bottom: 12px; background:#34495e;" onclick="sendEmergencySignal('Çalıntı (Motor)')">🏍️ Motor Çalındı</button>
+                <button class="btn-status" style="width: 100%; background:#95a5a6;" onclick="hideEmergencyReasons()">❌ İptal Et</button>
+            </div>
+            <a id="native-dialer-link" href="tel:112" class="btn-link hidden" style="width: 100%; background: #d35400; color: white; margin-top: 10px; font-size: 16px;">📞 112'Yİ DOĞRUDAN ARA</a>
+        </div>
+        <button class="btn-fail" style="width: 100%; margin-top: 20px; background:#7f8c8d;" onclick="logout()">Çıkış Yap</button>
+    </div>
+
+    <script>
+        // SENİN FİREBASE BİLGİLERİN ENTEGRE EDİLDİ
+        const firebaseConfig = {
+            apiKey: "AIzaSyCUyrdC1_zhyDpycyYipuRmBurYoxlumA4",
+            authDomain: "sultan-kebaptakip.firebaseapp.com",
+            databaseURL: "https://sultan-kebaptakip-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "sultan-kebaptakip",
+            storageBucket: "sultan-kebaptakip.firebasestorage.app",
+            messagingSenderId: "962338552819",
+            appId: "1:962338552819:web:d6b75ab7ee70837ab57086"
+        };
+
+        // Firebase Başlatma
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        let tumKuryeler = {};
+        let aktifSiparisObj = null;
+        let loggedInUser = "";
+        let currentRole = ""; 
+
+        // FİREBASE VERİLERİNİ CANLI DİNLEME
+        db.ref('kuryeler').on('value', (snapshot) => {
+            if(snapshot.val()) tumKuryeler = snapshot.val();
+        });
+
+        db.ref('aktif_siparis').on('value', (snapshot) => {
+            aktifSiparisObj = snapshot.val();
+            if(aktifSiparisObj) renderSiparisGörünümleri(aktifSiparisObj);
+        });
+
+        db.ref('acil_durum').on('value', (snapshot) => {
+            const data = snapshot.val();
+            if(data && data.durum === "AKTIF") {
+                renderAcilDurumGörünümü(data);
+            } else {
+                document.getElementById('emergency-overlay').classList.add('hidden');
+            }
+        });
+
+        function showLoginForm(role) {
+            currentRole = role;
+            document.getElementById('login-selection-screen').classList.add('hidden');
+            document.getElementById('login-form-screen').classList.remove('hidden');
+        }
+
+        function backToSelection() {
+            document.getElementById('login-form-screen').classList.add('hidden');
+            document.getElementById('login-selection-screen').classList.remove('hidden');
+        }
+
+        function handleLogin() {
+            const user = document.getElementById('login-username').value.trim();
+            const pass = document.getElementById('login-password').value;
+            if(!user || !pass) return alert("Alanları doldurun!");
+
+            if(currentRole === 'admin') {
+                if(user === "SultanSultan1231784" && pass === "178400") {
+                    document.getElementById('login-form-screen').classList.add('hidden');
+                    document.getElementById('admin-panel').classList.remove('hidden');
+                } else { alert("Hatalı Admin Bilgisi!"); }
+            } else {
+                if(tumKuryeler[user] && tumKuryeler[user] === pass) {
+                    loggedInUser = user;
+                    document.getElementById('display-kurye-name').innerText = user;
+                    document.getElementById('login-form-screen').classList.add('hidden');
+                    document.getElementById('user-panel').classList.remove('hidden');
+                } else { alert("Kurye bulunamadı veya şifre hatalı!"); }
+            }
+        }
+
+        function addKurye() {
+            const username = document.getElementById('new-kurye-name').value.trim();
+            const password = document.getElementById('new-kurye-pass').value;
+            if(!username || !password) return alert("Alanları doldurun!");
+
+            db.ref('kuryeler/' + username).set(password);
+            alert(`"${username}" kuryesi Firebase veritabanına kaydedildi!`);
+            document.getElementById('new-kurye-name').value = "";
+            document.getElementById('new-kurye-pass').value = "";
+        }
+
+        function createOrder() {
+            const items = document.getElementById('order-items').value;
+            const price = document.getElementById('order-price').value;
+            const address = document.getElementById('order-address').value;
+            if(!items || !price || !address) return alert("Alanları doldurun!");
+
+            const orderData = { items, price: price + " ₺", address, status: "Sipariş Hazırlandı / Yolda" };
+            db.ref('aktif_siparis').set(orderData);
+            
+            document.getElementById('order-items').value = "";
+            document.getElementById('order-price').value = "";
+            document.getElementById('order-address').value = "";
+        }
+
+        function renderSiparisGörünümleri(data) {
+            document.getElementById('admin-order-monitor').innerHTML = `
+                <div class="order-card">
+                    <strong>Sipariş:</strong> ${data.items}<br><strong>Tutar:</strong> ${data.price}<br><strong>Adres:</strong> ${data.address}<br>
+                    <div class="status-badge" style="background:#f1c40f; color:#000;">Canlı Durum: ${data.status}</div>
+                </div>`;
+
+            document.getElementById('user-order-display').innerHTML = `
+                <div class="order-card">
+                    <h3>${data.items}</h3><p><strong>Tutar:</strong> ${data.price}</p><p><strong>Adres:</strong> ${data.address}</p><p><strong>Mevcut Durum:</strong> ${data.status}</p>
+                </div>
+                <div class="action-group">
+                    <button class="btn-status" onclick="updateStatus('Siparişi Aldım')">✅ Siparişi Aldım</button>
+                    <button class="btn-user" onclick="updateStatus('Teslim Ettim')">🏁 Teslim Ettim</button>
+                    <button class="btn-fail" onclick="showReasonPrompt()">❌ Teslim Edemedim</button>
+                    <div id="reason-box" class="hidden" style="margin-top:10px;">
+                        <input type="text" id="fail-reason" placeholder="Neden teslim edilemedi?">
+                        <button class="btn-fail" style="width:100%;" onclick="submitFailReason()">Nedeni Bildir</button>
+                    </div>
+                </div>`;
+        }
+
+        function updateStatus(newStatus) { 
+            db.ref('aktif_siparis/status').set(newStatus);
+        }
+        
+        function showReasonPrompt() { document.getElementById('reason-box').classList.remove('hidden'); }
+        function submitFailReason() {
+            const reason = document.getElementById('fail-reason').value;
+            if(!reason) return alert("Neden yazın!");
+            updateStatus("Teslim Edilemedi! Neden: " + reason);
+        }
+
+        function showEmergencyReasons() { document.getElementById('emergency-reason-box').classList.remove('hidden'); }
+        function hideEmergencyReasons() { document.getElementById('emergency-reason-box').classList.add('hidden'); }
+
+        function sendEmergencySignal(secilenSebep) {
+            const emergencyData = { durum: "AKTIF", time: new Date().toLocaleTimeString(), kurye: loggedInUser, reason: secilenSebep, lat: null, lng: null };
+
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition((position) => {
+                    emergencyData.lat = position.coords.latitude;
+                    emergencyData.lng = position.coords.longitude;
+                    db.ref('acil_durum').set(emergencyData);
+                    bitirEmergencyAkisi();
+                }, () => {
+                    db.ref('acil_durum').set(emergencyData);
+                    bitirEmergencyAkisi();
+                }, { timeout: 3000 });
+            } else {
+                db.ref('acil_durum').set(emergencyData);
+                bitirEmergencyAkisi();
+            }
+        }
+
+        function bitirEmergencyAkisi() {
+            hideEmergencyReasons();
+            document.getElementById('native-dialer-link').classList.remove('hidden');
+        }
+
+        function renderAcilDurumGörünümü(data) {
+            const overlay = document.getElementById('emergency-overlay');
+            overlay.classList.remove('hidden');
+            document.getElementById('emergency-details').innerHTML = `
+                Sürücü <strong>"${data.kurye.toUpperCase()}"</strong> acil durum bildirdi!<br><br>
+                <span style="font-size:24px; background:yellow; color:black; padding:8px; border-radius:8px; font-weight:bold;">⚠️ DURUM: ${data.reason.toUpperCase()}</span>`;
+            
+            if(data.lat && data.lng) {
+                document.getElementById('geo-link-container').innerHTML = `<a href="https://www.google.com/maps?q=${data.lat},${data.lng}" target="_blank" style="color:yellow; font-weight:bold; font-size:18px; display:block; margin:20px 0; text-decoration:underline;">📍 SÜRÜCÜNÜN HARİTADAKİ YERİNİ GÖR</a>`;
+            } else {
+                document.getElementById('geo-link-container').innerHTML = "<p style='margin-top:10px; color:#ffdddd;'>Konum bilgisi alınamadı.</p>";
+            }
+        }
+
+        function clearEmergency() { 
+            db.ref('acil_durum').set({ durum: "KAPALI" });
+        }
+        
+        function logout() {
+            document.getElementById('admin-panel').classList.add('hidden');
+            document.getElementById('user-panel').classList.add('hidden');
+            document.getElementById('login-selection-screen').classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
